@@ -1,1 +1,375 @@
 
+<!DOCTYPE html>
+<html lang="uk" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        body { background-color: #0f172a; color: #f1f5f9; -webkit-font-smoothing: antialiased; }
+        .quiz-card { background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255,255,255,0.05); }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .sticky-panel { max-height: calc(100vh - 1rem); }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-4px) rotate(-0.5deg); }
+            40%, 80% { transform: translateX(4px) rotate(0.5deg); }
+        }
+        .animate-shake { animation: shake 0.35s ease-in-out; }
+
+        @keyframes slideInUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-toast { animation: slideInUp 0.3s ease-out; }
+    </style>
+</head>
+<body class="p-2 md:p-4 relative min-h-screen" 
+      x-data="quizApp()" 
+      x-init="init()" 
+      @keydown.window.cmd.g.prevent="showGenerator = true" 
+      @keydown.window.ctrl.g.prevent="showGenerator = true"
+      @keydown.escape.window="showGenerator = false">
+
+    <script id="offline-data-store">
+        /* INJECT_DATA_HERE */
+    </script>
+
+    <div class="fixed bottom-4 right-4 z-[100] space-y-2 w-full max-w-xs pointer-events-none" x-cloak>
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="bg-slate-800 border border-slate-700 text-slate-200 p-3 rounded-lg shadow-2xl animate-toast flex items-center gap-3 pointer-events-auto"
+                 @click="removeToast(toast.id)">
+                <div :class="{'text-emerald-400': toast.type === 'success', 'text-blue-400': toast.type === 'info', 'text-rose-400': toast.type === 'error'}">
+                    <span x-show="toast.type === 'success'">✔️</span>
+                    <span x-show="toast.type === 'info'">ℹ️</span>
+                    <span x-show="toast.type === 'error'">❌</span>
+                </div>
+                <div class="text-xs font-medium" x-text="toast.message"></div>
+            </div>
+        </template>
+    </div>
+
+    <div class="max-w-6xl mx-auto flex flex-col md:flex-row gap-4 relative">
+        
+        <main class="flex-grow max-w-3xl">
+            <header class="mb-4 border-b border-slate-800 pb-2">
+                <h1 class="text-xl font-bold text-white tracking-tight" x-text="quizTitle"></h1>
+            </header>
+
+            <div class="space-y-3">
+                <template x-for="(item, index) in questions" :key="index">
+                    <div class="quiz-card p-4 rounded-xl shadow-sm">
+                        <div class="flex justify-between items-start mb-3">
+                            <h3 class="text-base font-semibold text-slate-200 leading-snug" x-text="(index + 1) + '. ' + item.q"></h3>
+                            <button @click="userStates[index].showHint = !userStates[index].showHint" class="text-slate-500 hover:text-yellow-400 p-1 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 01-18 0z" /></svg>
+                            </button>
+                        </div>
+
+                        <div class="grid gap-2">
+                            <template x-for="(answer, aIndex) in item.a" :key="aIndex">
+                                <button 
+                                    @click="checkAnswer(index, aIndex)"
+                                    :disabled="userStates[index].selected !== null"
+                                    :class="{
+                                        'border-slate-700 bg-slate-800/50 hover:bg-slate-700': userStates[index].selected === null,
+                                        'border-emerald-500 bg-emerald-500/10 text-emerald-400': userStates[index].selected !== null && aIndex === item.c,
+                                        'border-rose-500 bg-rose-500/10 text-rose-400': userStates[index].selected === aIndex && aIndex !== item.c,
+                                        'opacity-30': userStates[index].selected !== null && aIndex !== item.c && userStates[index].selected !== aIndex
+                                    }"
+                                    class="w-full text-left p-3 border rounded-lg transition-colors text-sm"
+                                >
+                                    <span x-text="answer"></span>
+                                </button>
+                            </template>
+                        </div>
+
+                        <div x-show="userStates[index].showHint || (userStates[index].selected !== null && userStates[index].selected !== item.c)" 
+                             x-transition
+                             class="animate-shake mt-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-200 text-sm shadow-[0_0_15px_rgba(234,179,8,0.05)]">
+                            <span class="mr-2">💡</span><span x-text="item.h"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="h-10"></div>
+        </main>
+
+        <aside class="md:w-[320px] shrink-0">
+            <div id="capture-area" class="md:sticky md:top-2 sticky-panel bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex flex-col relative overflow-hidden">
+                
+                <div x-show="isFinished" x-cloak class="mb-4 text-center border-b border-slate-800 pb-4 animate-fade-in">
+                    <div class="flex justify-between items-start mb-1">
+                        <h2 class="text-base font-black text-emerald-400 tracking-wide uppercase">🏆 Молодець!</h2>
+                        <div class="text-[10px] font-mono text-slate-500" x-text="getTimestamp()"></div>
+                    </div>
+                    
+                    <p class="text-xs text-slate-400 mb-3">Час: <span class="text-white font-mono font-bold text-sm" x-text="formatTime(timer)"></span></p>
+                    
+                    <div class="bg-slate-950/80 rounded-lg p-2 mb-3 h-40 flex items-center justify-center border border-slate-800/80">
+                        <img :src="currentMeme" class="max-w-full max-h-full object-contain rounded opacity-95" alt="Meme" crossorigin="anonymous">
+                    </div>
+                    
+                    <button @click="location.reload()" class="w-full bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/30 font-bold py-2.5 rounded-lg transition-all text-xs uppercase tracking-wider active:scale-95">
+                        Спробувати швидше! 🔄
+                    </button>
+                </div>
+
+                <div x-show="!isFinished" class="flex justify-between items-center mb-3 border-b border-slate-800 pb-2">
+                    <div>
+                        <h2 class="text-xs font-bold text-rose-500 uppercase tracking-widest mb-1">🚩 Повторити</h2>
+                        <div class="text-[11px] text-slate-400 font-mono flex items-center gap-2">
+                            <span><span class="text-slate-200" x-text="answeredCount() + '/' + questions.length"></span></span>
+                            <span>•</span>
+                            <span :class="{'text-emerald-400 font-bold': timerInterval !== null}">⏱ <span x-text="formatTime(timer)"></span></span>
+                        </div>
+                    </div>
+                    <button @click="shareStats(true)" class="bg-slate-800 hover:bg-slate-700 p-1.5 rounded transition-colors" title="Зберегти результат">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    </button>
+                </div>
+
+                <div class="flex-grow overflow-y-auto custom-scroll pr-1 space-y-2 pb-2">
+                    <div x-show="isFinished && toRepeat().length > 0" x-cloak class="text-[10px] text-rose-500/80 uppercase font-bold tracking-widest mb-2 mt-1">Помилки:</div>
+                    
+                    <template x-for="qIdx in toRepeat()" :key="qIdx">
+                        <div class="text-[11px] p-2.5 bg-rose-900/10 border border-rose-900/30 rounded-lg text-slate-300 flex flex-col gap-2">
+                            <div>
+                                <span class="font-bold text-rose-500 mr-1" x-text="'#' + (parseInt(qIdx)+1)"></span>
+                                <span x-text="questions[qIdx].q"></span>
+                            </div>
+                            <div class="text-[10px] text-yellow-500/80 bg-slate-950/50 p-2 rounded border border-yellow-500/10 italic">
+                                💡 <span x-text="questions[qIdx].h"></span>
+                            </div>
+                        </div>
+                    </template>
+                    
+                    <div x-show="toRepeat().length === 0 && !isFinished" class="text-[11px] text-slate-500 italic py-4 text-center">
+                        Помилочок нема)
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <div x-show="showGenerator" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm" @click.self="showGenerator = false">
+        <div class="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-xl shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+                <h2 class="text-sm font-bold text-slate-300 uppercase">Control Center</h2>
+                <div class="flex items-center gap-2">
+                    <button @click="downloadOffline" class="text-slate-400 hover:text-emerald-400 text-[11px] font-medium px-2 py-1 bg-slate-800 rounded transition-colors" title="Завантажити з вшитим JSON">💾 Офлайн</button>
+                    <button @click="copyPrompt" class="text-slate-400 hover:text-blue-400 text-[11px] font-medium px-2 py-1 bg-slate-800 rounded">:)️</button>
+                    <button @click="showGenerator = false" class="text-slate-500 hover:text-white text-lg leading-none">&times;</button>
+                </div>
+            </div>
+            <div class="p-4">
+                <textarea x-model="rawJsonInput" class="w-full h-64 bg-slate-950 text-blue-400 font-mono text-xs p-3 rounded-lg border border-slate-800 focus:border-blue-500 outline-none resize-none" spellcheck="false"></textarea>
+                <button @click="generateAndCopy" class="mt-3 w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg transition-colors text-xs uppercase tracking-wider">
+                    Build & Copy URL
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let MEMES = [
+            // "https://i.imgflip.com/4t0m5.jpg"  //doge, but Musk lox )))))))))
+        ];
+        for(let i=0; i<40; i++) MEMES.push(`https://raw.githubusercontent.com/robocode-pb/quiz/refs/heads/static/cat/${i}.png`)
+
+        function quizApp() {
+            return {
+                quizTitle: "",
+                questions: [],
+                userStates: [],
+                showGenerator: false,
+                rawJsonInput: '',
+                timer: 0,
+                timerInterval: null,
+                isFinished: false,
+                toasts: [],
+                currentMeme: MEMES[Math.floor(Math.random() * MEMES.length)],
+
+                init() {
+                    const params = new URLSearchParams(window.location.search);
+                    const rawData = params.get('data');
+                    let data;
+
+                    // Офлайн дата (якщо ми завантажили збережений файл)
+                    if (window.INJECTED_QUIZ) { data = window.INJECTED_QUIZ; } 
+                    else if (rawData) {
+                        try { data = JSON.parse(decodeURIComponent(escape(atob(rawData)))); } 
+                        catch (e) { data = this.getDefaultData(); }
+                    } else { data = this.getDefaultData(); }
+
+                    this.quizTitle = data.title || "Опитування";
+                    this.questions = data.questions || [];
+                    this.rawJsonInput = JSON.stringify(data, null, 4);
+                    this.userStates = this.questions.map(() => ({ selected: null, showHint: false }));
+                },
+
+                startTimer() {
+                    if (this.timerInterval !== null) return; // Захист від подвійного запуску
+                    this.timerInterval = setInterval(() => {
+                        if (!this.isFinished) this.timer++;
+                    }, 1000);
+                },
+
+                addToast(message, type = 'info', duration = 3000) {
+                    const id = Date.now();
+                    this.toasts.push({ id, message, type });
+                    if (duration > 0) setTimeout(() => this.removeToast(id), duration);
+                },
+
+                removeToast(id) {
+                    this.toasts = this.toasts.filter(t => t.id !== id);
+                },
+
+                checkAnswer(qIndex, aIndex) {
+                    // Запуск таймера при ПЕРШОМУ кліку
+                    if (!this.timerInterval && !this.isFinished) {
+                        this.startTimer();
+                    }
+
+                    this.userStates[qIndex].selected = aIndex;
+                    
+                    if (this.answeredCount() === this.questions.length) {
+                        this.isFinished = true;
+                        clearInterval(this.timerInterval);
+                        this.addToast("Тест завершено!", "success");
+                        
+                        // Затримка, щоб UI встиг оновитися (з'явився мем), і робимо авто-скрін
+                        setTimeout(() => {
+                            this.shareStats(false);
+                        }, 800);
+                    }
+                },
+
+                answeredCount() { return this.userStates.filter(s => s.selected !== null).length; },
+
+                toRepeat() {
+                    return Object.keys(this.userStates).filter(idx => {
+                        const s = this.userStates[idx];
+                        return s.selected !== null && s.selected !== this.questions[idx].c;
+                    });
+                },
+
+                formatTime(seconds) {
+                    const m = Math.floor(seconds / 60);
+                    const s = seconds % 60;
+                    return `${m}:${s < 10 ? '0' : ''}${s}`;
+                },
+
+                getTimestamp() {
+                    return new Date().toLocaleString('uk-UA', { 
+                        day: '2-digit', month: '2-digit', year: 'numeric', 
+                        hour: '2-digit', minute: '2-digit', second: '2-digit' 
+                    });
+                },
+                getAdvancedFingerprint() {
+                    const n = navigator;
+                    const s = screen;
+                    const res = `${s.width}x${s.height}x${s.colorDepth}`; // Екран
+                    const cores = n.hardwareConcurrency || '?'; // Ядра CPU
+                    const lang = n.language || 'unknown'; // Мова
+                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown'; // Часовий пояс
+                    const platform = n.platform || 'unknown'; // ОС
+                    const ua = n.userAgent;
+                    let uaHash = 0;
+                    for (let i = 0; i < ua.length; i++) {
+                        uaHash = ((uaHash << 5) - uaHash) + ua.charCodeAt(i);
+                        uaHash |= 0; 
+                    }
+                    const shortUaHash = Math.abs(uaHash).toString(16);
+
+                    return `FP:[${platform}|${res}|CPU:${cores}|${lang}|TZ:${tz}|UA:${shortUaHash}]`;
+                },
+
+                async shareStats(manual = false) {
+                    if (manual) this.addToast("Генеруємо скріншот...", "info", 2000);
+                    const element = document.getElementById('capture-area');
+                    
+                    // Розкриваємо контейнер для повного скріну
+                    const scrollContainer = element.querySelector('.overflow-y-auto');
+                    const originalStyles = scrollContainer.getAttribute('style') || '';
+                    scrollContainer.style.overflow = 'visible';
+                    scrollContainer.style.maxHeight = 'none';
+                    
+                    const canvas = await html2canvas(element, { 
+                        backgroundColor: '#0f172a', 
+                        scale: 2,
+                        useCORS: true
+                    });
+
+                    // ФІНГЕРПРІНТ (Схований водяний знак)
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.02)";
+                    ctx.font = "10px monospace";
+                    // Рядок 1: Базова інфа про тест
+                    const baseInfo = `UltraQuiz | T:${this.timer}s | Err:${this.toRepeat().length} | D:${Date.now()}`;
+                    // Рядок 2: Апаратний відбиток пристрою
+                    const deviceFp = this.getAdvancedFingerprint();
+
+                    // Малюємо зліва знизу (два рядки)
+                    ctx.fillText(baseInfo, 10, canvas.height - 20);
+                    ctx.fillText(deviceFp, 10, canvas.height - 8);
+
+                    // Дублюємо справа зверху (на випадок якщо низ обріжуть)
+                    ctx.fillText(baseInfo, canvas.width - 300, 15);
+                    ctx.fillText(deviceFp, canvas.width - 300, 27);
+
+                    const link = document.createElement('a');
+                    const safeTime = this.getTimestamp().replace(/[:\s,.]/g, '-');
+                    link.download = `quiz-results_{this.quizTitle}_${safeTime}.png`;
+                    link.href = canvas.toDataURL();
+                    link.click();
+                    
+                    scrollContainer.setAttribute('style', originalStyles);
+                    if (manual) this.addToast("Скріншот збережено!", "success");
+                },
+
+                async downloadOffline() {
+                    try {
+                        const response = await fetch(window.location.href.split('?')[0]);
+                        let html = await response.text();
+                        const injectString = `window.INJECTED_QUIZ = ${this.rawJsonInput};`;
+                        html = html.replace('/* INJECT_DATA_HERE */', injectString);
+                        
+                        const blob = new Blob([html], { type: "text/html" });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `offline-quiz-${Date.now()}.html`;
+                        a.click();
+                        this.addToast("Офлайн версія завантажена!", "success");
+                    } catch (e) { this.addToast("Помилка (потрібен сервер для fetch)", "error"); }
+                },
+
+                generateAndCopy() {
+                    const b64 = btoa(unescape(encodeURIComponent(this.rawJsonInput)));
+                    const url = new URL(window.location.origin + window.location.pathname);
+                    url.searchParams.set('data', b64);
+                    navigator.clipboard.writeText(url.toString());
+                    this.addToast("URL скопійовано!", "success");
+                },
+
+                copyPrompt() {
+                    navigator.clipboard.writeText("Ти — парсер тестів. Зроби JSON: {title: '...', questions: [{q: '...', a: ['...'], c: 0, h: '...'}]}. c-corect h-hint Без води. Намагайся дотримуватись термінології питань, але якщо итання мало скріншот чи картинку пропусти його\n\nВхідні данні:");
+                    this.addToast("Промпт в буфері!", "success");
+                },
+
+                getDefaultData() {
+                    return {
+                     "title": "Чи знаєш ти, що таке ПК?",   "questions": [     {       "q": "Який компонент називають 'мозком' комп'ютера?",       "a": [         "Процесор",         "Монітор",         "Оперативна пам'ять",         "Жорсткий диск"       ],       "c": 0,       "h": "Він виконує всі основні обчислення та команди."     },     {       "q": "Де постійно зберігаються ваші файли та програми?",       "a": [         "В оперативній пам'яті (RAM)",         "На жорсткому диску (HDD/SSD)",         "У відеокарті",         "У блоці живлення"       ],       "c": 1,       "h": "Це основне сховище даних вашого пристрою, яке не очищається після вимкнення."     },     {       "q": "Для чого потрібна оперативна пам'ять (RAM)?",       "a": [         "Для постійного зберігання фільмів та ігор",         "Для тимчасового зберігання даних працюючих програм",         "Для виведення зображення на екран",         "Для охолодження системи"       ],       "c": 1,       "h": "Ця пам'ять очищається при кожному перезавантаженні системи."     },     {       "q": "Який пристрій розподіляє електроенергію між усіма деталями ПК?",       "a": [         "Материнська плата",         "Кулер",         "Блок живлення",         "Процесор"       ],       "c": 2,       "h": "Він підключається безпосередньо до розетки."     },     {       "q": "Який компонент в першу чергу відповідає за обробку графіки в іграх?",       "a": [         "Звукова карта",         "Мережева карта",         "Відеокарта",         "Материнська плата"       ],       "c": 2,       "h": "До неї зазвичай підключається кабель від монітора."     }   ] 
+                    };
+                }
+            }
+        }
+    </script>
+</body>
+</html>
