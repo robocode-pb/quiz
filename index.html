@@ -326,7 +326,7 @@
 
                     const link = document.createElement('a');
                     const safeTime = this.getTimestamp().replace(/[:\s,.]/g, '-');
-                    link.download = `quiz-results_{this.quizTitle}_${safeTime}.png`;
+                    link.download = `quiz-results_${this.quizTitle}_${safeTime}.png`;
                     link.href = canvas.toDataURL();
                     link.click();
                     
